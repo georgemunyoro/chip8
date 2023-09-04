@@ -25,6 +25,8 @@ private:
   void loadROMFileFromPath(char *romFilePath);
   void drawDisplayToTerminal();
 
+  uint64_t interval = 0;
+
   /* Memory Map:
     +---------------+= 0xFFF (4095) End of Chip-8 RAM
     |               |
@@ -106,7 +108,7 @@ private:
       a s d f
       z x c v
   */
-  uint16_t keyboard;
+  bool keyboard[16];
 
   /*
     The original implementation of the Chip-8 language used a 64x32-pixel
@@ -120,4 +122,23 @@ private:
         ----------------------
   */
   Chip8SDLDisplay display;
+};
+
+const uint8_t NUMBER_SPRITES[16][5] = {{0xF0, 0x90, 0x90, 0x90, 0xF0},
+                                       {0x20, 0x60, 0x20, 0x20, 0x70},
+                                       {0xF0, 0x10, 0xF0, 0x80, 0xF0},
+                                       {0xF0, 0x10, 0xF0, 0x10, 0xF0},
+                                       {0x90, 0x90, 0xF0, 0x10, 0x10},
+                                       {0xF0, 0x80, 0xF0, 0x10, 0xF0},
+                                       {0xF0, 0x80, 0xF0, 0x90, 0xF0},
+                                       {0xF0, 0x10, 0x20, 0x40, 0x40},
+                                       {0xF0, 0x90, 0xF0, 0x90, 0xF0},
+                                       {0xF0, 0x90, 0xF0, 0x10, 0xF0},
+                                       {0xF0, 0x90, 0xF0, 0x90, 0x90},
+                                       {0xE0, 0x90, 0xE0, 0x90, 0xE0},
+                                       {0xF0, 0x80, 0x80, 0x80, 0xF0},
+                                       {0xE0, 0x90, 0x90, 0x90, 0xE0},
+                                       {0xF0, 0x80, 0xF0, 0x80, 0xF0},
+                                       {0xF0, 0x80, 0xF0, 0x80, 0x80}
+
 };

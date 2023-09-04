@@ -5,11 +5,13 @@
 #include <SDL_keycode.h>
 #include <SDL_rect.h>
 #include <SDL_render.h>
+#include <SDL_stdinc.h>
 #include <_types/_uint16_t.h>
 #include <_types/_uint32_t.h>
 #include <_types/_uint64_t.h>
 #include <_types/_uint8_t.h>
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
 #include <fstream>
 #include <iostream>
@@ -26,11 +28,19 @@ Chip8::Chip8(char *romFilePath) {
   clearMemory();
   loadROMFileFromPath(romFilePath);
   SP = 0;
+  for (int i = 0; i < 16; ++i)
+    keyboard[i] = false;
 }
 
 void Chip8::clearMemory() {
   for (int i = 0; i < 4096; ++i)
     memory[i] = 0;
+
+  for (int i = 0; i < 16; ++i) {
+    for (int j = 0; j < 5; ++j) {
+      memory[i * 5 + j] = NUMBER_SPRITES[i][j];
+    }
+  }
 }
 
 void Chip8::loadROMFileFromPath(char *romFilePath) {
@@ -84,10 +94,72 @@ void Chip8::run() {
 
       SDL_Event e;
       bool quit = false;
+
       while (quit == false) {
+
+        bool shouldUpdateDisplay = false;
+
         while (SDL_PollEvent(&e)) {
           if (e.type == SDL_QUIT)
             quit = true;
+
+          if (e.type == SDL_KEYUP || e.type == SDL_KEYDOWN) {
+            bool isKeyPressed = e.type == SDL_KEYDOWN && e.type != SDL_KEYUP;
+
+            switch (e.key.keysym.sym) {
+            case SDLK_1:
+              keyboard[1] = isKeyPressed;
+              break;
+            case SDLK_2:
+              keyboard[2] = isKeyPressed;
+              break;
+            case SDLK_3:
+              keyboard[3] = isKeyPressed;
+              break;
+            case SDLK_4:
+              keyboard[0xC] = isKeyPressed;
+              break;
+
+            case SDLK_q:
+              keyboard[4] = isKeyPressed;
+              break;
+            case SDLK_w:
+              keyboard[5] = isKeyPressed;
+              break;
+            case SDLK_e:
+              keyboard[6] = isKeyPressed;
+              break;
+            case SDLK_r:
+              keyboard[0xD] = isKeyPressed;
+              break;
+
+            case SDLK_a:
+              keyboard[7] = isKeyPressed;
+              break;
+            case SDLK_s:
+              keyboard[8] = isKeyPressed;
+              break;
+            case SDLK_d:
+              keyboard[9] = isKeyPressed;
+              break;
+            case SDLK_f:
+              keyboard[0xE] = isKeyPressed;
+              break;
+
+            case SDLK_z:
+              keyboard[0xA] = isKeyPressed;
+              break;
+            case SDLK_x:
+              keyboard[0] = isKeyPressed;
+              break;
+            case SDLK_c:
+              keyboard[0xB] = isKeyPressed;
+              break;
+            case SDLK_v:
+              keyboard[0xF] = isKeyPressed;
+              break;
+            }
+          }
         }
 
         uint32_t opcode = (memory[PC] << 8) | memory[PC + 1];
@@ -97,10 +169,7 @@ void Chip8::run() {
         uint8_t kk = (opcode & 0x00FF);
         uint16_t nnn = opcode & 0x0FFF;
 
-        printf("%02X : %02X : %04X : %04X\n", PC, SP, stack[SP], opcode);
-
-        // print_opcode(opcode);
-        // printf("%d\n", stack[SP]);
+        // printf("%02X : %02X : %04X : %04X\n", PC, SP, stack[SP], opcode);
 
         switch (opcode & 0xF000) {
 
@@ -124,6 +193,7 @@ void Chip8::run() {
             if (opcode == 0x00E0) {
               for (int i = 0; i < 32; ++i)
                 display.bits[i] = 0ull;
+              shouldUpdateDisplay = true;
             }
 
             PC += 2;
@@ -180,7 +250,7 @@ void Chip8::run() {
         case 0xD000: {
           uint8_t n = opcode & 0x000F;
 
-          printf("DRAW x: %d, y: %d, n: %d\n", V[x], V[y], n);
+          // printf("DRAW x: %d, y: %d, n: %d\n", V[x], V[y], n);
 
           for (int i = 0; i < n; ++i) {
 
@@ -193,13 +263,8 @@ void Chip8::run() {
             display.bits[V[y] + i] ^= valueToXOR;
           }
 
-          PC += 2;
-          break;
-        }
+          shouldUpdateDisplay = true;
 
-        // Annn - LD I, addr
-        case 0xA000: {
-          I = nnn;
           PC += 2;
           break;
         }
@@ -257,8 +322,9 @@ void Chip8::run() {
           // 8xy4 - ADD Vx, Vy
           // Set Vx = Vx + Vy, set VF = carry.
           case 4: {
-            V[0xF] = (V[x] + V[y] > 255) ? 1 : 0;
+            uint8_t carry = (V[x] + V[y] > 255) ? 1 : 0;
             V[x] += V[y];
+            V[0xF] = carry;
             PC += 2;
             break;
           }
@@ -266,8 +332,9 @@ void Chip8::run() {
           // 8xy5 - SUB Vx, Vy
           // Set Vx = Vx - Vy, set VF = NOT borrow.
           case 5: {
-            V[0xF] = V[x] > V[y] ? 1 : 0;
+            uint8_t notBorrow = V[x] > V[y] ? 1 : 0;
             V[x] -= V[y];
+            V[0xF] = notBorrow;
             PC += 2;
             break;
           }
@@ -275,10 +342,10 @@ void Chip8::run() {
           // 8xy6 - SHR Vx {, Vy}
           // Set Vx = Vx SHR 1.
           case 6: {
+            uint8_t cutoffBit = V[x] & 1;
             V[x] = V[y];
-            V[0xF] = V[x] & 1ull;
             V[x] >>= 1;
-
+            V[0xF] = cutoffBit;
             PC += 2;
             break;
           }
@@ -286,8 +353,9 @@ void Chip8::run() {
           // 8xy7 - SUBN Vx, Vy
           // Set Vx = Vy - Vx, set VF = NOT borrow.
           case 7: {
-            V[0xF] = V[y] > V[x] ? 1 : 0;
+            uint8_t notBorrow = V[y] > V[x] ? 1 : 0;
             V[x] = V[y] - V[x];
+            V[0xF] = notBorrow;
             PC += 2;
             break;
           }
@@ -295,10 +363,10 @@ void Chip8::run() {
           // 8xyE - SHL Vx {, Vy}
           // Set Vx = Vx SHL 1.
           case 0xE: {
+            uint8_t cutoffBit = V[x] >> 7;
             V[x] = V[y];
-            V[0xF] = V[x] & (1ull << 8);
             V[x] <<= 1;
-
+            V[0xF] = cutoffBit;
             PC += 2;
             break;
           }
@@ -318,12 +386,62 @@ void Chip8::run() {
           break;
         }
 
+        // Annn - LD I, addr
+        case 0xA000: {
+          I = nnn;
+          PC += 2;
+          break;
+        }
+
+        // Bnnn - JP V0, addr
+        // Jump to location nnn + V0.
+        case 0xB000: {
+          PC = nnn + V[0];
+          break;
+        }
+
+        case 0xE000: {
+          switch (opcode & 0x00FF) {
+
+          // Ex9E - SKP Vx
+          // Skip next instruction if key with the value of Vx is pressed.
+          case 0x009E: {
+            if (keyboard[V[x]]) {
+              // printf("Key pressed, skipping %01X\n", V[x]);
+              PC += 2;
+            }
+            // printf("Key not pressed, doing nothing %01X\n", V[x]);
+            PC += 2;
+            break;
+          }
+
+          // ExA1 - SKNP Vx
+          // Skip next instruction if key with the value of Vx is not pressed.
+          case 0x00A1: {
+            if (!keyboard[V[x]]) {
+              // printf("Key not pressed, skipping %01X\n", V[x]);
+              PC += 2;
+            }
+            // printf("Key pressed, doing nothing %01X\n", V[x]);
+            PC += 2;
+            break;
+          }
+
+          default: {
+            THROW_UNRECOGNISED_OPCODE(opcode);
+          }
+          }
+
+          break;
+        }
+
         case 0xF000: {
           switch (opcode & 0xF0FF) {
 
           // Fx07 - LD Vx, DT
           // Set Vx = delay timer value.
           case 0xF007: {
+            printf("delay timer nonsense\n");
             V[x] = delayTimer;
             PC += 2;
             break;
@@ -332,88 +450,17 @@ void Chip8::run() {
           // Fx0A - LD Vx, K
           // Wait for a key press, store the value of the key in Vx.
           case 0xF00A: {
-            SDL_Event e;
-            bool waitingForKey = true;
-            while (waitingForKey) {
-              if (SDL_WaitEvent(&e)) {
-                if (e.type == SDL_KEYDOWN) {
-                  switch (e.key.keysym.sym) {
 
-                  case SDLK_1:
-                    V[x] = 0x1;
-                    waitingForKey = false;
-                    break;
-                  case SDLK_2:
-                    V[x] = 0x2;
-                    waitingForKey = false;
-                    break;
-                  case SDLK_3:
-                    V[x] = 0x3;
-                    waitingForKey = false;
-                    break;
-                  case SDLK_4:
-                    V[x] = 0xC;
-                    waitingForKey = false;
-                    break;
+            for (int i = 0; i < 16; ++i) {
+              if (keyboard[i] == true) {
+                V[x] = i;
+                printf("Key pressed: %01X\n", V[x]);
+                PC += 2;
 
-                  case SDLK_q:
-                    V[x] = 0x4;
-                    waitingForKey = false;
-                    break;
-                  case SDLK_w:
-                    V[x] = 0x5;
-                    waitingForKey = false;
-                    break;
-                  case SDLK_e:
-                    V[x] = 0x6;
-                    waitingForKey = false;
-                    break;
-                  case SDLK_r:
-                    V[x] = 0xD;
-                    waitingForKey = false;
-                    break;
-
-                  case SDLK_a:
-                    V[x] = 0x7;
-                    waitingForKey = false;
-                    break;
-                  case SDLK_s:
-                    V[x] = 0x8;
-                    waitingForKey = false;
-                    break;
-                  case SDLK_d:
-                    V[x] = 0x9;
-                    waitingForKey = false;
-                    break;
-                  case SDLK_f:
-                    V[x] = 0xE;
-                    waitingForKey = false;
-                    break;
-
-                  case SDLK_z:
-                    V[x] = 0xA;
-                    waitingForKey = false;
-                    break;
-                  case SDLK_x:
-                    V[x] = 0x0;
-                    waitingForKey = false;
-                    break;
-                  case SDLK_c:
-                    V[x] = 0xB;
-                    waitingForKey = false;
-                    break;
-                  case SDLK_v:
-                    V[x] = 0xF;
-                    waitingForKey = false;
-                    break;
-                  }
-                }
+                break;
               }
             }
 
-            printf("Key pressed: %01X\n", V[x]);
-
-            PC += 2;
             break;
           }
 
@@ -441,13 +488,13 @@ void Chip8::run() {
             break;
           }
 
-            // Fx29 - LD F, Vx
-            // Set I = location of sprite for digit Vx.
-            // case 0xF029: {
-            //   // TODO
-            //   PC += 2;
-            //   break;
-            // }
+          // Fx29 - LD F, Vx
+          // Set I = location of sprite for digit Vx.
+          case 0xF029: {
+            I = x * 5;
+            PC += 2;
+            break;
+          }
 
           // Fx33 - LD B, Vx
           // Store BCD representation of Vx in memory locations I,
@@ -504,34 +551,49 @@ void Chip8::run() {
         }
         }
 
-        // Set render color to red ( background will be rendered in this color )
-        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+        if (shouldUpdateDisplay) {
+          // Set render color to red (background will be rendered in this color)
+          SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
 
-        // Clear winow
-        SDL_RenderClear(renderer);
+          // Clear winow
+          SDL_RenderClear(renderer);
 
-        for (int displayRow = 0; displayRow < 32; ++displayRow) {
-          for (int displayCol = 0; displayCol < 64; ++displayCol) {
+          for (int displayRow = 0; displayRow < 32; ++displayRow) {
+            for (int displayCol = 0; displayCol < 64; ++displayCol) {
 
-            bool isPixelLit =
-                ((display.bits[displayRow]) & (1ull << (63 - displayCol))) != 0;
+              bool isPixelLit = ((display.bits[displayRow]) &
+                                 (1ull << (63 - displayCol))) != 0;
 
-            if (!isPixelLit)
-              continue;
+              if (!isPixelLit)
+                continue;
 
-            SDL_Rect r;
-            r.h = 10;
-            r.w = 10;
-            r.x = displayCol * 10;
-            r.y = displayRow * 10;
+              SDL_Rect r;
+              r.h = 10;
+              r.w = 10;
+              r.x = displayCol * 10;
+              r.y = displayRow * 10;
 
-            SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
-            SDL_RenderFillRect(renderer, &r);
+              SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
+              SDL_RenderFillRect(renderer, &r);
+            }
           }
+
+          SDL_RenderPresent(renderer);
         }
 
-        SDL_RenderPresent(renderer);
-        // usleep(12000);
+        shouldUpdateDisplay = false;
+
+        uint64_t now =
+            std::chrono::system_clock::now().time_since_epoch().count();
+
+        printf("time since last interval %d\n", now - interval);
+
+        if (delayTimer > 0 && (now - interval) >= 800) {
+          --delayTimer;
+          interval = now;
+        }
+
+        usleep(1000);
       }
     }
   }
