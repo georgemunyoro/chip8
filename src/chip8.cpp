@@ -289,15 +289,18 @@ void Chip8::run() {
 
             V[0xF] = 0;
 
+            int X = V[x] % 64;
+            int Y = V[y] % 32;
+
             for (int i = 0; i < n; ++i) {
 
               uint64_t valueToXOR =
-                  ((uint64_t)(0ull | memory[I + i]) << 56) >> (V[x] % 64);
+                  ((uint64_t)(0ull | memory[I + i]) << 56) >> X;
 
-              if (valueToXOR & display.bits[(V[y] + i) % 32])
+              if (valueToXOR & display.bits[(Y + i) % 32])
                 V[0xF] = 1;
 
-              display.bits[V[y] + i] ^= valueToXOR;
+              display.bits[Y + i] ^= valueToXOR;
             }
 
             PC += 2;
