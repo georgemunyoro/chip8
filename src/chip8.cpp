@@ -13,11 +13,15 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <fstream>
 #include <iostream>
+#include <iterator>
 #include <queue>
 #include <stdio.h>
 #include <unistd.h>
+#include <vector>
 
 void THROW_UNRECOGNISED_OPCODE(uint32_t opcode) {
   printf("Invalid instruction! opcode: 0x%04X\n", opcode);
@@ -28,6 +32,7 @@ Chip8::Chip8(char *romFilePath) {
   clearMemory();
   loadROMFileFromPath(romFilePath);
   SP = 0;
+  delayTimer = 0;
   for (int i = 0; i < 16; ++i)
     keyboard[i] = false;
 }
@@ -80,6 +85,9 @@ void Chip8::run() {
   SDL_Window *window = NULL;
   SDL_Renderer *renderer = NULL;
 
+  std::vector<SDL_Rect> rectangles;
+  rectangles.reserve(2048);
+
   if (SDL_Init(SDL_INIT_VIDEO) < 0)
     printf("SDL could not initialize! SDL_Error: %s\n", SDL_GetError());
   else {
@@ -95,9 +103,17 @@ void Chip8::run() {
       SDL_Event e;
       bool quit = false;
 
-      while (quit == false) {
+      interval = std::chrono::duration_cast<std::chrono::milliseconds>(
+                     std::chrono::system_clock::now().time_since_epoch())
+                     .count();
 
-        bool shouldUpdateDisplay = false;
+      auto clock_interval = std::chrono::high_resolution_clock::now();
+      uint64_t seconds_interval = interval;
+
+      uint64_t instructions_executed = 0;
+      uint64_t frames_rendered = 0;
+
+      while (quit == false) {
 
         while (SDL_PollEvent(&e)) {
           if (e.type == SDL_QUIT)
@@ -171,392 +187,443 @@ void Chip8::run() {
 
         // printf("%02X : %02X : %04X : %04X\n", PC, SP, stack[SP], opcode);
 
-        switch (opcode & 0xF000) {
+        uint64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(
+                           std::chrono::system_clock::now().time_since_epoch())
+                           .count();
 
-        case 0x0000: {
+        const std::chrono::duration<double> diff =
+            std::chrono::high_resolution_clock::now() - clock_interval;
 
-          // 00EE - RET
-          // Return from a subroutine.
-          if (opcode == 0x00EE) {
+        // printf("%f\n", diff.count());
 
-            if (SP == 0) {
-              printf("Stack undeflow!\n");
+        if (diff.count() >= 0.001666f) {
+
+          switch (opcode & 0xF000) {
+
+          case 0x0000: {
+
+            // 00EE - RET
+            // Return from a subroutine.
+            if (opcode == 0x00EE) {
+
+              if (SP == 0) {
+                printf("Stack undeflow!\n");
+                exit(1);
+              }
+
+              PC = stack[SP];
+              --SP;
+            } else {
+
+              // 00E0 - CLS
+              // Clear the display.
+              if (opcode == 0x00E0) {
+                for (int i = 0; i < 32; ++i)
+                  display.bits[i] = 0ull;
+              }
+
+              PC += 2;
+            }
+
+            break;
+          }
+
+          // 1nnn - JP addr
+          // Jump to location nnn.
+          case 0x1000: {
+            PC = nnn;
+            break;
+          }
+
+          // 2nnn - CALL addr
+          // Call subroutine at nnn.
+          case 0x2000: {
+            if (SP == 15) {
+              printf("Stack overflow!\n");
               exit(1);
             }
 
-            PC = stack[SP];
-            --SP;
-          } else {
+            ++SP;
+            stack[SP] = PC + 2;
+            PC = nnn;
+            break;
+          }
 
-            // 00E0 - CLS
-            // Clear the display.
-            if (opcode == 0x00E0) {
-              for (int i = 0; i < 32; ++i)
-                display.bits[i] = 0ull;
-              shouldUpdateDisplay = true;
+          // 3xkk - SE Vx, byte
+          // Skip next instruction if Vx = kk.
+          case 0x3000: {
+            PC += V[x] == kk ? 4 : 2;
+            break;
+          }
+
+          // 4xkk - SNE Vx, byte
+          // Skip next instruction if Vx != kk.
+          case 0x4000: {
+            PC += V[x] != kk ? 4 : 2;
+            break;
+          }
+
+          // 5xy0 - SE Vx, Vy
+          // Skip next instruction if Vx = Vy.
+          case 0x5000: {
+            PC += V[x] == V[y] ? 4 : 2;
+            break;
+          }
+
+          // Cxkk - RND Vx, byte
+          // Set Vx = random byte AND kk.
+          case 0xC000: {
+            uint8_t random = rand() % 255;
+            V[x] = random & kk;
+            PC += 2;
+            break;
+          }
+
+          // Dxyn - DRW Vx, Vy, nibble
+          // Display n-byte sprite starting at memory location I at (Vx, Vy),
+          // set VF = collision.
+          case 0xD000: {
+            uint8_t n = opcode & 0x000F;
+
+            // printf("DRAW x: %d, y: %d, n: %d\n", V[x], V[y], n);
+
+            V[0xF] = 0;
+
+            for (int i = 0; i < n; ++i) {
+
+              uint64_t valueToXOR =
+                  ((uint64_t)(0ull | memory[I + i]) << 56) >> (V[x] % 64);
+
+              if (valueToXOR & display.bits[(V[y] + i) % 32])
+                V[0xF] = 1;
+
+              display.bits[V[y] + i] ^= valueToXOR;
             }
 
             PC += 2;
+            break;
           }
 
-          break;
-        }
+          // 6xkk LD Vx, byte
+          case 0x6000: {
+            V[x] = kk;
+            PC += 2;
+            break;
+          }
 
-        // 1nnn - JP addr
-        // Jump to location nnn.
-        case 0x1000: {
-          PC = nnn;
-          break;
-        }
+          // 7xkk - ADD Vx, byte
+          // Set Vx = Vx + kk.
+          case 0x7000: {
+            V[x] += kk;
+            PC += 2;
+            break;
+          }
 
-        // 2nnn - CALL addr
-        // Call subroutine at nnn.
-        case 0x2000: {
-          if (SP == 15) {
-            printf("Stack overflow!\n");
+          case 0x8000: {
+            switch (opcode & 0x000F) {
+
+            // 8xy0 - LD Vx, Vy
+            // Set Vx = Vy.
+            case 0: {
+              V[x] = V[y];
+              PC += 2;
+              break;
+            }
+
+            // 8xy1 - OR Vx, Vy
+            // Set Vx = Vx OR Vy.
+            case 1: {
+              V[x] |= V[y];
+              V[0xF] = 0;
+              PC += 2;
+              break;
+            }
+
+            // 8xy2 - AND Vx, Vy
+            // Set Vx = Vx AND Vy.
+            case 2: {
+              V[x] &= V[y];
+              V[0xF] = 0;
+              PC += 2;
+              break;
+            }
+
+            // 8xy3 - XOR Vx, Vy
+            // Set Vx = Vx XOR Vy.
+            case 3: {
+              V[x] ^= V[y];
+              V[0xF] = 0;
+              PC += 2;
+              break;
+            }
+
+            // 8xy4 - ADD Vx, Vy
+            // Set Vx = Vx + Vy, set VF = carry.
+            case 4: {
+              uint8_t carry = (V[x] + V[y] > 255) ? 1 : 0;
+              V[x] += V[y];
+              V[0xF] = carry;
+              PC += 2;
+              break;
+            }
+
+            // 8xy5 - SUB Vx, Vy
+            // Set Vx = Vx - Vy, set VF = NOT borrow.
+            case 5: {
+              uint8_t notBorrow = V[x] > V[y] ? 1 : 0;
+              V[x] -= V[y];
+              V[0xF] = notBorrow;
+              PC += 2;
+              break;
+            }
+
+            // 8xy6 - SHR Vx {, Vy}
+            // Set Vx = Vx SHR 1.
+            case 6: {
+              uint8_t cutoffBit = V[x] & 1;
+              V[x] = V[y];
+              V[x] >>= 1;
+              V[0xF] = cutoffBit;
+              PC += 2;
+              break;
+            }
+
+            // 8xy7 - SUBN Vx, Vy
+            // Set Vx = Vy - Vx, set VF = NOT borrow.
+            case 7: {
+              uint8_t notBorrow = V[y] > V[x] ? 1 : 0;
+              V[x] = V[y] - V[x];
+              V[0xF] = notBorrow;
+              PC += 2;
+              break;
+            }
+
+            // 8xyE - SHL Vx {, Vy}
+            // Set Vx = Vx SHL 1.
+            case 0xE: {
+              uint8_t cutoffBit = V[x] >> 7;
+              V[x] = V[y];
+              V[x] <<= 1;
+              V[0xF] = cutoffBit;
+              PC += 2;
+              break;
+            }
+
+            default: {
+              THROW_UNRECOGNISED_OPCODE(opcode);
+            }
+            }
+
+            break;
+          }
+
+          // 9xy0 - SNE Vx, Vy
+          // Skip next instruction if Vx != Vy.
+          case 0x9000: {
+            PC += V[x] != V[y] ? 4 : 2;
+            break;
+          }
+
+          // Annn - LD I, addr
+          case 0xA000: {
+            I = nnn;
+            PC += 2;
+            break;
+          }
+
+          // Bnnn - JP V0, addr
+          // Jump to location nnn + V0.
+          case 0xB000: {
+            PC = nnn + V[0];
+            break;
+          }
+
+          case 0xE000: {
+            switch (opcode & 0x00FF) {
+
+            // Ex9E - SKP Vx
+            // Skip next instruction if key with the value of Vx is pressed.
+            case 0x009E: {
+              if (keyboard[V[x]]) {
+                PC += 2;
+              }
+              PC += 2;
+              break;
+            }
+
+            // ExA1 - SKNP Vx
+            // Skip next instruction if key with the value of Vx is not
+            // pressed.
+            case 0x00A1: {
+              if (!keyboard[V[x]]) {
+                PC += 2;
+              }
+              PC += 2;
+              break;
+            }
+
+            default: {
+              THROW_UNRECOGNISED_OPCODE(opcode);
+            }
+            }
+
+            break;
+          }
+
+          case 0xF000: {
+            switch (opcode & 0xF0FF) {
+
+            // Fx07 - LD Vx, DT
+            // Set Vx = delay timer value.
+            case 0xF007: {
+              // uint64_t now =
+              //     std::chrono::duration_cast<std::chrono::milliseconds>(
+              //         std::chrono::system_clock::now().time_since_epoch())
+              //         .count();
+
+              // for (float i = 0; i < ((now - interval) / 16.0); ++i) {
+              //   if (delayTimer > 0)
+              //     --delayTimer;
+              // }
+
+              // interval = now;
+
+              V[x] = delayTimer;
+              PC += 2;
+              break;
+            }
+
+            // Fx0A - LD Vx, K
+            // Wait for a key press, store the value of the key in Vx.
+            case 0xF00A: {
+
+              for (int i = 0; i < 16; ++i) {
+                if (keyboard[i] == true) {
+                  V[x] = i;
+                  printf("Key pressed: %01X\n", V[x]);
+                  PC += 2;
+
+                  break;
+                }
+              }
+
+              break;
+            }
+
+            // Fx15 - LD DT, Vx
+            // Set delay timer = Vx.
+            case 0xF015: {
+              // interval =
+              //     std::chrono::duration_cast<std::chrono::milliseconds>(
+              //         std::chrono::system_clock::now().time_since_epoch())
+              //         .count();
+
+              delayTimer = V[x];
+              PC += 2;
+              break;
+            }
+
+            // Fx18 - LD ST, Vx
+            // Set sound timer = Vx.
+            case 0xF018: {
+              soundTimer = V[x];
+              PC += 2;
+              break;
+            }
+
+            // Fx1E - ADD I, Vx
+            // Set I = I + Vx.
+            case 0xF01E: {
+              I += V[x];
+              PC += 2;
+              break;
+            }
+
+            // Fx29 - LD F, Vx
+            // Set I = location of sprite for digit Vx.
+            case 0xF029: {
+              I = x * 5;
+              PC += 2;
+              break;
+            }
+
+            // Fx33 - LD B, Vx
+            // Store BCD representation of Vx in memory locations I,
+            // I+1, and I+2.
+            case 0xF033: {
+
+              uint8_t o = V[x] % 10;
+              uint8_t t = ((V[x] % 100) - o) / 10;
+              uint8_t h = ((V[x] % 1000) - t - o) / 100;
+
+              memory[I] = h;
+              memory[I + 1] = t;
+              memory[I + 2] = o;
+
+              PC += 2;
+              break;
+            }
+
+            // Fx55 - LD [I], Vx
+            // Store registers V0 through Vx in memory starting at
+            // location I.
+            case 0xF055: {
+              for (int i = 0; i <= x; ++i) {
+                memory[I + i] = V[i];
+              }
+
+              PC += 2;
+              break;
+            }
+
+            // Fx65 - LD Vx, [I]
+            // Read registers V0 through Vx from memory starting at
+            // location I.
+            case 0xF065: {
+              for (int i = 0; i <= x; ++i) {
+                V[i] = memory[I + i];
+              }
+
+              PC += 2;
+              break;
+            }
+
+            default: {
+              THROW_UNRECOGNISED_OPCODE(opcode);
+            }
+            }
+
+            break;
+          }
+
+          default: {
+            printf("Invalid instruction! opcode: 0x%04X\n", opcode);
             exit(1);
           }
+          }
 
-          ++SP;
-          stack[SP] = PC + 2;
-          PC = nnn;
-          break;
+          ++instructions_executed;
+          clock_interval = std::chrono::high_resolution_clock::now();
         }
 
-        // 3xkk - SE Vx, byte
-        // Skip next instruction if Vx = kk.
-        case 0x3000: {
-          PC += V[x] == kk ? 4 : 2;
-          break;
-        }
+        if (now - interval >= 17) {
+          if (delayTimer > 0)
+            --delayTimer;
 
-        // 4xkk - SNE Vx, byte
-        // Skip next instruction if Vx != kk.
-        case 0x4000: {
-          PC += V[x] != kk ? 4 : 2;
-          break;
-        }
+          ++frames_rendered;
+          interval = now;
 
-        // 5xy0 - SE Vx, Vy
-        // Skip next instruction if Vx = Vy.
-        case 0x5000: {
-          PC += V[x] == V[y] ? 4 : 2;
-          break;
-        }
+          rectangles.clear();
 
-        // Dxyn - DRW Vx, Vy, nibble
-        // Display n-byte sprite starting at memory location I at (Vx, Vy),
-        // set VF = collision.
-        case 0xD000: {
-          uint8_t n = opcode & 0x000F;
-
-          // printf("DRAW x: %d, y: %d, n: %d\n", V[x], V[y], n);
-
-          for (int i = 0; i < n; ++i) {
-
-            uint64_t valueToXOR =
-                ((uint64_t)(0ull | memory[I + i]) << 56) >> V[x];
-
-            if (valueToXOR & display.bits[V[y] + i])
-              V[0xF] = 1;
-
-            display.bits[V[y] + i] ^= valueToXOR;
-          }
-
-          shouldUpdateDisplay = true;
-
-          PC += 2;
-          break;
-        }
-
-        // 6xkk LD Vx, byte
-        case 0x6000: {
-          V[x] = kk;
-          PC += 2;
-          break;
-        }
-
-        // 7xkk - ADD Vx, byte
-        // Set Vx = Vx + kk.
-        case 0x7000: {
-          V[x] += kk;
-          PC += 2;
-          break;
-        }
-
-        case 0x8000: {
-          switch (opcode & 0x000F) {
-
-          // 8xy0 - LD Vx, Vy
-          // Set Vx = Vy.
-          case 0: {
-            V[x] = V[y];
-            PC += 2;
-            break;
-          }
-
-          // 8xy1 - OR Vx, Vy
-          // Set Vx = Vx OR Vy.
-          case 1: {
-            V[x] |= V[y];
-            PC += 2;
-            break;
-          }
-
-          // 8xy2 - AND Vx, Vy
-          // Set Vx = Vx AND Vy.
-          case 2: {
-            V[x] &= V[y];
-            PC += 2;
-            break;
-          }
-
-          // 8xy3 - XOR Vx, Vy
-          // Set Vx = Vx XOR Vy.
-          case 3: {
-            V[x] ^= V[y];
-            PC += 2;
-            break;
-          }
-
-          // 8xy4 - ADD Vx, Vy
-          // Set Vx = Vx + Vy, set VF = carry.
-          case 4: {
-            uint8_t carry = (V[x] + V[y] > 255) ? 1 : 0;
-            V[x] += V[y];
-            V[0xF] = carry;
-            PC += 2;
-            break;
-          }
-
-          // 8xy5 - SUB Vx, Vy
-          // Set Vx = Vx - Vy, set VF = NOT borrow.
-          case 5: {
-            uint8_t notBorrow = V[x] > V[y] ? 1 : 0;
-            V[x] -= V[y];
-            V[0xF] = notBorrow;
-            PC += 2;
-            break;
-          }
-
-          // 8xy6 - SHR Vx {, Vy}
-          // Set Vx = Vx SHR 1.
-          case 6: {
-            uint8_t cutoffBit = V[x] & 1;
-            V[x] = V[y];
-            V[x] >>= 1;
-            V[0xF] = cutoffBit;
-            PC += 2;
-            break;
-          }
-
-          // 8xy7 - SUBN Vx, Vy
-          // Set Vx = Vy - Vx, set VF = NOT borrow.
-          case 7: {
-            uint8_t notBorrow = V[y] > V[x] ? 1 : 0;
-            V[x] = V[y] - V[x];
-            V[0xF] = notBorrow;
-            PC += 2;
-            break;
-          }
-
-          // 8xyE - SHL Vx {, Vy}
-          // Set Vx = Vx SHL 1.
-          case 0xE: {
-            uint8_t cutoffBit = V[x] >> 7;
-            V[x] = V[y];
-            V[x] <<= 1;
-            V[0xF] = cutoffBit;
-            PC += 2;
-            break;
-          }
-
-          default: {
-            THROW_UNRECOGNISED_OPCODE(opcode);
-          }
-          }
-
-          break;
-        }
-
-        // 9xy0 - SNE Vx, Vy
-        // Skip next instruction if Vx != Vy.
-        case 0x9000: {
-          PC += V[x] != V[y] ? 4 : 2;
-          break;
-        }
-
-        // Annn - LD I, addr
-        case 0xA000: {
-          I = nnn;
-          PC += 2;
-          break;
-        }
-
-        // Bnnn - JP V0, addr
-        // Jump to location nnn + V0.
-        case 0xB000: {
-          PC = nnn + V[0];
-          break;
-        }
-
-        case 0xE000: {
-          switch (opcode & 0x00FF) {
-
-          // Ex9E - SKP Vx
-          // Skip next instruction if key with the value of Vx is pressed.
-          case 0x009E: {
-            if (keyboard[V[x]]) {
-              // printf("Key pressed, skipping %01X\n", V[x]);
-              PC += 2;
-            }
-            // printf("Key not pressed, doing nothing %01X\n", V[x]);
-            PC += 2;
-            break;
-          }
-
-          // ExA1 - SKNP Vx
-          // Skip next instruction if key with the value of Vx is not pressed.
-          case 0x00A1: {
-            if (!keyboard[V[x]]) {
-              // printf("Key not pressed, skipping %01X\n", V[x]);
-              PC += 2;
-            }
-            // printf("Key pressed, doing nothing %01X\n", V[x]);
-            PC += 2;
-            break;
-          }
-
-          default: {
-            THROW_UNRECOGNISED_OPCODE(opcode);
-          }
-          }
-
-          break;
-        }
-
-        case 0xF000: {
-          switch (opcode & 0xF0FF) {
-
-          // Fx07 - LD Vx, DT
-          // Set Vx = delay timer value.
-          case 0xF007: {
-            printf("delay timer nonsense\n");
-            V[x] = delayTimer;
-            PC += 2;
-            break;
-          }
-
-          // Fx0A - LD Vx, K
-          // Wait for a key press, store the value of the key in Vx.
-          case 0xF00A: {
-
-            for (int i = 0; i < 16; ++i) {
-              if (keyboard[i] == true) {
-                V[x] = i;
-                printf("Key pressed: %01X\n", V[x]);
-                PC += 2;
-
-                break;
-              }
-            }
-
-            break;
-          }
-
-          // Fx15 - LD DT, Vx
-          // Set delay timer = Vx.
-          case 0xF015: {
-            delayTimer = V[x];
-            PC += 2;
-            break;
-          }
-
-          // Fx18 - LD ST, Vx
-          // Set sound timer = Vx.
-          case 0xF018: {
-            soundTimer = V[x];
-            PC += 2;
-            break;
-          }
-
-          // Fx1E - ADD I, Vx
-          // Set I = I + Vx.
-          case 0xF01E: {
-            I += V[x];
-            PC += 2;
-            break;
-          }
-
-          // Fx29 - LD F, Vx
-          // Set I = location of sprite for digit Vx.
-          case 0xF029: {
-            I = x * 5;
-            PC += 2;
-            break;
-          }
-
-          // Fx33 - LD B, Vx
-          // Store BCD representation of Vx in memory locations I,
-          // I+1, and I+2.
-          case 0xF033: {
-
-            uint8_t o = V[x] % 10;
-            uint8_t t = ((V[x] % 100) - o) / 10;
-            uint8_t h = ((V[x] % 1000) - t - o) / 100;
-
-            memory[I] = h;
-            memory[I + 1] = t;
-            memory[I + 2] = o;
-
-            PC += 2;
-            break;
-          }
-
-          // Fx55 - LD [I], Vx
-          // Store registers V0 through Vx in memory starting at
-          // location I.
-          case 0xF055: {
-            for (int i = 0; i <= x; ++i) {
-              memory[I + i] = V[i];
-            }
-
-            PC += 2;
-            break;
-          }
-
-          // Fx65 - LD Vx, [I]
-          // Read registers V0 through Vx from memory starting at
-          // location I.
-          case 0xF065: {
-            for (int i = 0; i <= x; ++i) {
-              V[i] = memory[I + i];
-            }
-
-            PC += 2;
-            break;
-          }
-
-          default: {
-            THROW_UNRECOGNISED_OPCODE(opcode);
-          }
-          }
-
-          break;
-        }
-
-        default: {
-          printf("Invalid instruction! opcode: 0x%04X\n", opcode);
-          exit(1);
-        }
-        }
-
-        if (shouldUpdateDisplay) {
           // Set render color to red (background will be rendered in this color)
           SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
 
           // Clear winow
           SDL_RenderClear(renderer);
+
+          SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
+
+          // SDL_Rect rectangles[2048];
 
           for (int displayRow = 0; displayRow < 32; ++displayRow) {
             for (int displayCol = 0; displayCol < 64; ++displayCol) {
@@ -573,27 +640,32 @@ void Chip8::run() {
               r.x = displayCol * 10;
               r.y = displayRow * 10;
 
-              SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
-              SDL_RenderFillRect(renderer, &r);
+              rectangles.push_back(r);
+
+              // SDL_RenderFillRects(SDL_Renderer *renderer, const SDL_Rect
+              // *rects, int count)
+              // SDL_RenderFillRect(renderer, &r);
             }
           }
 
+          SDL_RenderFillRects(renderer, rectangles.data(), rectangles.size());
           SDL_RenderPresent(renderer);
         }
 
-        shouldUpdateDisplay = false;
+        if (now - seconds_interval >= 1000) {
+          printf("%d ", delayTimer);
+          std::cout << instructions_executed << "Hz "
+                    << " " << frames_rendered << "fps" << std::endl;
 
-        uint64_t now =
-            std::chrono::system_clock::now().time_since_epoch().count();
+          frames_rendered = 0;
 
-        printf("time since last interval %d\n", now - interval);
+          seconds_interval = now;
+          instructions_executed = 0;
 
-        if (delayTimer > 0 && (now - interval) >= 800) {
-          --delayTimer;
-          interval = now;
+          if (delayTimer > 0) {
+            --delayTimer;
+          }
         }
-
-        usleep(1000);
       }
     }
   }
