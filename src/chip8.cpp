@@ -571,6 +571,7 @@ void Chip8::run() {
               for (int i = 0; i <= x; ++i) {
                 memory[I + i] = V[i];
               }
+              I += x + 1;
 
               PC += 2;
               break;
@@ -583,6 +584,7 @@ void Chip8::run() {
               for (int i = 0; i <= x; ++i) {
                 V[i] = memory[I + i];
               }
+              I += x + 1;
 
               PC += 2;
               break;
