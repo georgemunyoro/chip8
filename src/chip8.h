@@ -121,7 +121,7 @@ private:
         |(0, 31)     (63, 31)|
         ----------------------
   */
-  Chip8SDLDisplay display;
+  Chip8SDLDisplay display[2];
 };
 
 const uint8_t NUMBER_SPRITES[16][5] = {{0xF0, 0x90, 0x90, 0x90, 0xF0},
