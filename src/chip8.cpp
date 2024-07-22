@@ -1,28 +1,12 @@
 #include "chip8.h"
 
 #include <SDL.h>
-#include <SDL_events.h>
-#include <SDL_keyboard.h>
-#include <SDL_keycode.h>
-#include <SDL_rect.h>
-#include <SDL_render.h>
-#include <SDL_stdinc.h>
-#include <_types/_uint16_t.h>
-#include <_types/_uint32_t.h>
-#include <_types/_uint64_t.h>
-#include <_types/_uint8_t.h>
-#include <stdio.h>
-#include <unistd.h>
-
-#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <iostream>
-#include <iterator>
-#include <queue>
 #include <vector>
 
 void THROW_UNRECOGNISED_OPCODE(uint32_t opcode)

@@ -1,16 +1,8 @@
-#include <SDL2/SDL.h>
-#include <SDL_pixels.h>
-#include <SDL_surface.h>
-#include <SDL_video.h>
-#include <cairo.h>
-
-#include <cstdio>
-#include <cstdlib>
-#include <iostream>
 
 #include "chip8.h"
 
-using namespace std;
+#include <cstdio>
+#include <cstdlib>
 
 int main(int argc, char* argv[])
 {
@@ -20,6 +12,6 @@ int main(int argc, char* argv[])
         exit(1);
     }
 
-    Chip8* c = new Chip8(argv[1]);
-    c->run();
+    Chip8 emulator(argv[1]);
+    emulator.run();
 }
