@@ -1,6 +1,7 @@
 #pragma once
 
 #include <SDL_render.h>
+#include <string>
 
 struct Chip8SDLDisplay
 {
@@ -14,12 +15,12 @@ struct Chip8SDLDisplay
 class Chip8
 {
 public:
-    Chip8(char* romFilePath);
+    explicit Chip8(const std::string& romFilepath);
     void run();
 
 private:
     void clearMemory();
-    void loadROMFileFromPath(char* romFilePath);
+    void loadROMFileFromPath(const std::string& romFilepath);
     void drawDisplayToTerminal();
 
     uint64_t interval = 0;

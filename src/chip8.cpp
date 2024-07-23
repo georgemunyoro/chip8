@@ -15,20 +15,24 @@ void THROW_UNRECOGNISED_OPCODE(uint32_t opcode)
     exit(1);
 }
 
-Chip8::Chip8(char* romFilePath)
+Chip8::Chip8(const std::string& romFilepath)
 {
     clearMemory();
-    loadROMFileFromPath(romFilePath);
+    loadROMFileFromPath(romFilepath);
     SP = 0;
     delayTimer = 0;
-    for (int i = 0; i < 16; ++i)
-        keyboard[i] = false;
+    for (bool& i : keyboard)
+        i = false;
+    for (int i = 0; i < 32; ++i) {
+        this->display[0].bits[i] = 0ull;
+        this->display[1].bits[i] = 0ull;
+    }
 }
 
 void Chip8::clearMemory()
 {
-    for (int i = 0; i < 4096; ++i)
-        memory[i] = 0;
+    for (unsigned char& i : memory)
+        i = 0;
 
     for (int spriteIdx = 0; spriteIdx < 16; ++spriteIdx) {
         for (int spriteLineIdx = 0; spriteLineIdx < 5; ++spriteLineIdx) {
@@ -38,44 +42,32 @@ void Chip8::clearMemory()
     }
 }
 
-void Chip8::loadROMFileFromPath(char* romFilePath)
+void Chip8::loadROMFileFromPath(const std::string& romFilepath)
 {
-    std::cout << "Reading file: " << romFilePath << std::endl;
-
-    std::fstream romFile(romFilePath);
-
+    std::fstream romFile(romFilepath);
     if (!romFile.is_open()) {
-        std::cerr << "Failed to read file: " << romFilePath << std::endl;
+        std::cerr << "Failed to read file: " << romFilepath << std::endl;
         return;
     }
-
-    this->PC = 0x200;
+    int i = 0;
     while (romFile)
-        memory[PC++] = romFile.get();
-    this->PC = 0x200;
-
+        memory[0x200 + (i++)] = romFile.get();
+    PC = 0x200;
     romFile.close();
-
-    std::cout << "Loaded file: " << romFilePath << std::endl;
 }
 
 void print_opcode(uint16_t opcode) { printf("0x%04X\n", opcode); }
 
 void Chip8::drawDisplayToTerminal()
 {
-    for (int i = 0; i < 32; ++i) {
-        std::bitset<64> row(display[1].bits[i]);
+    for (const auto bit : display[1].bits) {
+        std::bitset<64> row(bit);
         std::cout << row << '\n';
     }
 }
 
 void Chip8::run()
 {
-    const int SCREEN_HEIGHT = 320;
-    const int SCREEN_WIDTH = 640;
-
-    SDL_Window* window = NULL;
-    SDL_Renderer* renderer = NULL;
 
     std::vector<SDL_Rect> rectangles;
     rectangles.reserve(2048);
@@ -83,14 +75,19 @@ void Chip8::run()
     if (SDL_Init(SDL_INIT_VIDEO) < 0)
         printf("SDL could not initialize! SDL_Error: %s\n", SDL_GetError());
     else {
+        SDL_Window* window = NULL;
+        constexpr int SCREEN_HEIGHT = 320;
+        constexpr int SCREEN_WIDTH = 640;
+
         window = SDL_CreateWindow("chip8", SDL_WINDOWPOS_UNDEFINED,
             SDL_WINDOWPOS_UNDEFINED, SCREEN_WIDTH, SCREEN_HEIGHT,
             SDL_WINDOW_SHOWN);
 
-        if (window == NULL)
+        if (window == nullptr)
             printf(
                 "Failed to create SDL window! SDL Error: %s\n", SDL_GetError());
         else {
+            SDL_Renderer* renderer = nullptr;
             renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
 
             SDL_Event e;
@@ -166,6 +163,8 @@ void Chip8::run()
                             break;
                         case SDLK_v:
                             keyboard[0xF] = isKeyPressed;
+                            break;
+                        default:
                             break;
                         }
                     }
